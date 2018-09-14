@@ -1,0 +1,15 @@
+*.class
+*.log
+
+# sbt specific
+.cache/
+.history/
+dist/*
+target/
+project/plugins/project/
+project/target/
+
+# Scala-IDE specific
+.scala_dependencies
+.worksheet
+.idea
