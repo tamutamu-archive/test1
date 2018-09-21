@@ -1,0 +1,17 @@
+version: '3'
+
+services:
+
+  mysql:
+    image: mysql:5.6
+    ports:
+      - "127.0.0.50:3306:3306"
+    volumes:
+      - ./mysql/custom.cnf:/etc/mysql/conf.d/custom.cnf
+      - ../db/ddl.sql:/docker-entrypoint-initdb.d/01_ddl.sql
+      - ../db/master_data.sql:/docker-entrypoint-initdb.d/02_master_data.sql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: stock_db
+      MYSQL_USER: stock_user
+      MYSQL_PASSWORD: password

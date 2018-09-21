@@ -7,7 +7,7 @@ trait TisProxy {
   this: Fetcher =>
 
   val proxy: SeleniumProxy = new SeleniumProxy()
-  proxy.setHttpProxy(config.getString("http_proxy"))
+  proxy.setHttpProxy(config.getString("fetcher.http_proxy"))
   driver.setProxySettings(proxy)
 
 }

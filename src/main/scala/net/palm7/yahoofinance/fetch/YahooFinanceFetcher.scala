@@ -5,9 +5,8 @@ import java.text.SimpleDateFormat
 import java.util.{Calendar, Date}
 
 import com.typesafe.config._
+import com.typesafe.scalalogging.Logger
 import net.palm7.yahoofinance.dao.Tables
-import net.palm7.yahoofinance.dao.Tables.profile.api._
-import net.palm7.yahoofinance.db.DBManager
 import org.openqa.selenium.htmlunit.HtmlUnitDriver
 import org.openqa.selenium.{By, WebElement, NoSuchElementException => SeleniumNoSuchElementException}
 
@@ -15,69 +14,90 @@ import scala.collection.JavaConverters._
 
 class YahooFinanceFetcher private(config: Config) extends Fetcher(config) {
 
-  private val sdf = new SimpleDateFormat("yyyy年m月d日");
+  val logger = Logger(this.getClass)
 
-  def fetch(code: String, startDate: Date, endData: Date) = {
+
+  override def fetch(code: String, startDate: Date, endData: Date): Either[Exception, List[Tables.PriceRow]] = {
+
+    logger.info(s"START $code")
 
     val url_without_pageno = gen_url(code, startDate, endData)
 
-
     try {
-      for (pageNo <- 1 to 9999) {
 
-        println(url_without_pageno + s"&p=$pageNo")
-        driver.get(url_without_pageno + s"&p=$pageNo")
+      Right(getPriceListPerPage(code, url_without_pageno, 1))
 
-        val _dailyPrices: List[WebElement] = driver.findElementByXPath("//table[contains(@class,'marB6')]/tbody").
-          findElements(By.xpath("./*")).asScala.toList
-        val dailyPrices = _dailyPrices.slice(1, _dailyPrices.size)
-
-        val priceList = for {
-          priceRow <- dailyPrices
-        } yield {
-          val ret = priceRow.getText.split(" ")
-
-          implicit def ssss(price: String): BigDecimal = {
-            BigDecimal(price.replaceAll(",", ""))
-          }
-
-          val vol = java.lang.Long.parseLong(ret(5).replaceAll(",", ""))
-          Tables.PriceRow(code, sd(ret(0)), ret(1), ret(2), ret(3), ret(4), ret(6), vol)
-        }
-
-        DBManager.db.run(Tables.Price.forceInsertAll(priceList))
-
-        isExistNext(driver, pageNo)
-
-      }
     } catch {
-      case e: SeleniumNoSuchElementException => println("!!! end !!!")
+      case e: Exception => Left(e)
+
+    } finally {
+      logger.info(s"END   $code")
     }
 
   }
 
-  private def sd(date: String): SqlDate = {
-    val d = sdf.parse(date)
+  def createPriceRow(_code: String, _date: String, _open: String, _low: String, _high: String, _close: String, _vol: String, _adjust: String): Tables.PriceRow = {
 
-    val cal = Calendar.getInstance();
-    cal.setTime(d);
-    cal.set(Calendar.HOUR_OF_DAY, 0);
-    cal.set(Calendar.MINUTE, 0);
-    cal.set(Calendar.SECOND, 0);
-    cal.set(Calendar.MILLISECOND, 0);
+    val sdf = new SimpleDateFormat("yyyy年M月d日")
+    val d = sdf.parse(_date)
 
-    new SqlDate(cal.getTimeInMillis());
+    val cal = Calendar.getInstance
+    cal.setTime(d)
+    cal.set(Calendar.HOUR_OF_DAY, 0)
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+
+    val open = BigDecimal(_open.replaceAll(",", ""))
+    val low = BigDecimal(_low.replaceAll(",", ""))
+    val high = BigDecimal(_high.replaceAll(",", ""))
+    val close = BigDecimal(_close.replaceAll(",", ""))
+    val adjust = BigDecimal(_adjust.replaceAll(",", ""))
+
+    val vol = java.lang.Long.parseLong(_vol.replaceAll(",", ""))
+
+    Tables.PriceRow(_code, new SqlDate(cal.getTimeInMillis()), open, low, high, close, adjust, vol)
   }
 
 
-  private def isExistNext(driver: HtmlUnitDriver, pageNo: Int) = {
+  private def getPriceListPerPage(code: String, baseURL: String, pageNo: Int): List[Tables.PriceRow] = {
+
+    logger.info(baseURL + s"&p=$pageNo")
+    driver.get(baseURL + s"&p=$pageNo")
+
+    val _dailyPrices: List[WebElement] = driver.findElementByXPath("//table[contains(@class,'marB6')]/tbody").
+      findElements(By.xpath("./*")).asScala.toList
+    val dailyPrices =
+      _dailyPrices.slice(1, _dailyPrices.size).
+        map(pr =>
+          pr.getText.split(" ")
+        )
+
+    val priceList: List[Tables.PriceRow] = for {
+      pr <- dailyPrices if pr.length == 7
+    } yield {
+      createPriceRow(code, pr(0), pr(1), pr(2), pr(3), pr(4), pr(5), pr(6))
+    }
+
+    isExistNext(driver, pageNo) match {
+      case true => priceList ::: getPriceListPerPage(code, baseURL, {
+        pageNo + 1
+      })
+      case false => priceList
+    }
+
+  }
+
+  private def isExistNext(driver: HtmlUnitDriver, pageNo: Int): Boolean = {
 
     // Next page exist?
     try {
       val nextPage = pageNo + 1
       driver.findElementByXPath(s"//ul[contains(@class,'ymuiPagingBottom')]/a[text() = '$nextPage']")
+      true
+
     } catch {
-      case e: SeleniumNoSuchElementException => throw e
+      case e: SeleniumNoSuchElementException => false
     }
 
   }
@@ -101,7 +121,7 @@ object YahooFinanceFetcher {
 
   def apply(config: Config): YahooFinanceFetcher = {
 
-    config.getString("http_proxy") match {
+    config.getString("fetcher.http_proxy") match {
       case proxy: String => {
         val fetcher = new YahooFinanceFetcher(config) with TisProxy
         fetcher
